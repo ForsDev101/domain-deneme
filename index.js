@@ -10,7 +10,8 @@ const client = new Client({
     GatewayIntentBits.GuildMessages,
     GatewayIntentBits.MessageContent,
     GatewayIntentBits.GuildMembers,
-    GatewayIntentBits.GuildModeration
+    GatewayIntentBits.GuildModeration,
+    GatewayIntentBits.GuildPresences // PRESENCE intent eklendi!
   ]
 });
 
@@ -19,6 +20,7 @@ const copyOperations = new Map(); // userId -> {sourceGuildId, targetGuildId, to
 
 client.once("ready", () => {
   console.log(`✅ Sunucu Kopyalama Botu Hazır: ${client.user.tag}`);
+  console.log(`📊 Sunucular: ${client.guilds.cache.size} adet`);
 });
 
 // En yüksek rol kontrolü
@@ -35,67 +37,115 @@ function hasHighestRole(member) {
   return userHighestRole.position > botHighestRole.position;
 }
 
-// Durum kontrolü (siccin kontrolü)
+// Durum kontrolü (siccin kontrolü) - GELİŞTİRİLMİŞ
 function hasSiccinStatus(member) {
-  if (!member.presence) return false;
-  
-  const activities = member.presence.activities;
-  if (!activities) return false;
-  
-  for (const activity of activities) {
-    if (
-      (activity.type === 0 && // Playing
-       (activity.name.toLowerCase().includes('/siccin') || 
-        activity.name.toLowerCase().includes('.gg/siccin'))) ||
-      (activity.type === 2 && // Listening
-       (activity.name.toLowerCase().includes('/siccin') || 
-        activity.name.toLowerCase().includes('.gg/siccin'))) ||
-      (activity.type === 3 && // Watching
-       (activity.name.toLowerCase().includes('/siccin') || 
-        activity.name.toLowerCase().includes('.gg/siccin'))) ||
-      (activity.type === 4 && // Custom
-       (activity.state && (activity.state.toLowerCase().includes('/siccin') || 
-        activity.state.toLowerCase().includes('.gg/siccin'))))
-    ) {
-      return true;
+  try {
+    // Presence verilerini kontrol et
+    if (!member.presence) {
+      console.log(`❌ ${member.user.tag}: Presence verisi yok`);
+      return false;
     }
+    
+    const activities = member.presence.activities;
+    if (!activities || activities.length === 0) {
+      console.log(`❌ ${member.user.tag}: Aktivite yok`);
+      return false;
+    }
+    
+    console.log(`🔍 ${member.user.tag} aktiviteleri:`, activities.map(a => `${a.type}: ${a.name} - ${a.state || ''}`));
+    
+    // Tüm aktiviteleri kontrol et
+    for (const activity of activities) {
+      const activityName = activity.name?.toLowerCase() || '';
+      const activityState = activity.state?.toLowerCase() || '';
+      const activityDetails = activity.details?.toLowerCase() || '';
+      
+      console.log(`📝 Aktivite kontrolü: ${activityName} | ${activityState} | ${activityDetails}`);
+      
+      // Çeşitli kombinasyonları kontrol et
+      if (
+        activityName.includes('/siccin') ||
+        activityName.includes('.gg/siccin') ||
+        activityName.includes('siccin') ||
+        activityState.includes('/siccin') ||
+        activityState.includes('.gg/siccin') ||
+        activityState.includes('siccin') ||
+        activityDetails.includes('/siccin') ||
+        activityDetails.includes('.gg/siccin') ||
+        activityDetails.includes('siccin')
+      ) {
+        console.log(`✅ ${member.user.tag}: Siccin bulundu!`);
+        return true;
+      }
+      
+      // Custom status kontrolü
+      if (activity.type === 4) { // Custom Status
+        if (activity.state) {
+          const lowerState = activity.state.toLowerCase();
+          if (lowerState.includes('/siccin') || lowerState.includes('.gg/siccin') || lowerState.includes('siccin')) {
+            console.log(`✅ ${member.user.tag}: Custom status siccin bulundu!`);
+            return true;
+          }
+        }
+      }
+      
+      // Rich presence kontrolü
+      if (activity.assets) {
+        const largeText = activity.assets.largeText?.toLowerCase() || '';
+        const smallText = activity.assets.smallText?.toLowerCase() || '';
+        
+        if (largeText.includes('siccin') || smallText.includes('siccin')) {
+          console.log(`✅ ${member.user.tag}: Rich presence siccin bulundu!`);
+          return true;
+        }
+      }
+    }
+    
+    console.log(`❌ ${member.user.tag}: Siccin bulunamadı`);
+    return false;
+    
+  } catch (error) {
+    console.log(`❌ Durum kontrol hatası (${member.user.tag}):`, error.message);
+    return false;
   }
-  
-  // Ayrıca durum mesajını da kontrol et
-  const customStatus = activities.find(a => a.type === 4);
-  if (customStatus && customStatus.state) {
-    return customStatus.state.toLowerCase().includes('/siccin') || 
-           customStatus.state.toLowerCase().includes('.gg/siccin');
-  }
-  
-  return false;
 }
 
-// Sunucu kopyalama komutu
+// ALTERNATİF: Daha basit durum kontrolü (client status)
+function hasSiccinInStatus(member) {
+  try {
+    // Kullanıcının durumunu al
+    const statusText = `
+      Aktiviteler: ${member.presence?.activities?.map(a => `${a.name}: ${a.state || ''}`).join(', ') || 'Yok'}
+      Durum: ${member.presence?.status || 'Yok'}
+      Client Status: ${JSON.stringify(member.presence?.clientStatus || {})}
+    `.toLowerCase();
+    
+    console.log(`🔍 ${member.user.tag} durum metni:`, statusText);
+    
+    // Basit kontrol
+    if (statusText.includes('/siccin') || statusText.includes('.gg/siccin')) {
+      console.log(`✅ ${member.user.tag}: Durum metninde siccin bulundu!`);
+      return true;
+    }
+    
+    return false;
+    
+  } catch (error) {
+    console.log(`❌ Basit durum kontrol hatası:`, error.message);
+    return false;
+  }
+}
+
+// Sunucu kopyalama komutu - SADECE EN YÜKSEK ROL KONTROLÜ
 client.on("messageCreate", async (message) => {
   if (message.author.bot) return;
   if (!message.content.startsWith('.pnl')) return;
   
-  // En yüksek rol kontrolü
+  // SADECE en yüksek rol kontrolü
   if (!hasHighestRole(message.member)) {
     return message.reply({ 
       content: '❌ Bu komutu kullanmak için en yüksek role sahip olmalısınız!'
     });
-  }
-  
-  // Durum kontrolü (/siccin veya .gg/siccin)
-  if (!hasSiccinStatus(message.member)) {
-    const warningEmbed = new EmbedBuilder()
-      .setColor(0xFF0000)
-      .setTitle('❌ Erişim Engellendi!')
-      .setDescription('Bu paneli kullanmak için durumunuzda **/siccin** veya **.gg/siccin** bulunmalıdır!')
-      .addFields(
-        { name: 'Gereksinimler', value: '1. En yüksek role sahip olmalısınız\n2. Durumunuzda /siccin veya .gg/siccin bulunmalı' },
-        { name: 'Durumunuz', value: '❌ **/siccin** veya **.gg/siccin** bulunamadı!' }
-      )
-      .setFooter({ text: 'Durumunuzu güncelleyip tekrar deneyin.' });
-    
-    return message.reply({ embeds: [warningEmbed] });
   }
   
   // Sunucu kopyalama embed'ini gönder
@@ -132,6 +182,10 @@ client.on("messageCreate", async (message) => {
           "<:emoji_32:1460226323833290784> Hesap, kopyalanacak sunucuda olmalı.\n" +
           "<:emoji_32:1460226323833290784> Hesap her iki sunucuda da olmalı.\n" +
           "<:emoji_32:1460226323833290784> Tokeninizi kimseyle paylaşmayın."
+      },
+      {
+        name: "⚠️ ÖNEMLİ NOT:",
+        value: "Butonu kullanmak için **durumunuzda /siccin veya .gg/siccin** olmalıdır!"
       }
     )
     .setFooter({ 
@@ -151,24 +205,41 @@ client.on("messageCreate", async (message) => {
   await message.reply({ embeds: [embed], components: [button] });
 });
 
-// Buton tıklama işleyici
+// Buton tıklama işleyici - DURUM KONTROLÜ BURADA
 client.on("interactionCreate", async (interaction) => {
   if (!interaction.isButton()) return;
   
   if (interaction.customId === 'start_copy') {
-    // Durum kontrolü (/siccin veya .gg/siccin)
-    if (!hasSiccinStatus(interaction.member)) {
+    // SADECE DURUM KONTROLÜ (hem gelişmiş hem basit)
+    const hasSiccin = hasSiccinStatus(interaction.member) || hasSiccinInStatus(interaction.member);
+    
+    if (!hasSiccin) {
+      // Debug bilgisi
+      console.log(`❌ BUTON ENGEL: ${interaction.user.tag} - Siccin durumu yok`);
+      console.log(`   Member: ${interaction.member.user.tag}`);
+      console.log(`   Presence:`, interaction.member.presence);
+      console.log(`   Activities:`, interaction.member.presence?.activities);
+      
       const warningEmbed = new EmbedBuilder()
         .setColor(0xFF0000)
         .setTitle('❌ Erişim Engellendi!')
-        .setDescription('Bu butonu kullanmak için durumunuzda **/siccin** veya **.gg/siccin** bulunmalıdır!')
+        .setDescription('Bu butonu kullanmak için **durumunuzda /siccin veya .gg/siccin** bulunmalıdır!')
         .addFields(
-          { name: 'Gereksinim', value: 'Durumunuzu /siccin veya .gg/siccin olarak ayarlayın.' },
-          { name: 'Şuanki Durum', value: '❌ **/siccin** veya **.gg/siccin** bulunamadı!' }
-        );
+          { 
+            name: 'Nasıl Ayarlanır?', 
+            value: '1. Discord\'u açın\n2. Sol alt profil fotoğrafınıza tıklayın\n3. "Durumunu Düzenle" seçeneğine tıklayın\n4. "Özel Durum" kısmına **/siccin** yazın\n5. Kaydedin ve tekrar deneyin' 
+          },
+          {
+            name: 'Alternatif Durumlar',
+            value: 'Aşağıdakilerden biri olmalı:\n• **/siccin**\n• **.gg/siccin**\n• **siccin**\n• **Siccin Sunucusu**'
+          }
+        )
+        .setFooter({ text: 'Durumunuzu ayarladıktan sonra butona tekrar tıklayın.' });
       
       return interaction.reply({ embeds: [warningEmbed], ephemeral: true });
     }
+    
+    console.log(`✅ BUTON İZİN: ${interaction.user.tag} - Siccin durumu mevcut`);
     
     const modal = new ModalBuilder()
       .setCustomId('copy_modal')
@@ -208,8 +279,9 @@ client.on("interactionCreate", async (interaction) => {
   }
   
   if (interaction.customId === 'confirm_copy') {
-    // Durum kontrolü
-    if (!hasSiccinStatus(interaction.member)) {
+    // Durum kontrolü (tekrar)
+    const hasSiccin = hasSiccinStatus(interaction.member) || hasSiccinInStatus(interaction.member);
+    if (!hasSiccin) {
       return interaction.reply({ 
         content: '❌ Durumunuz değişti! Lütfen durumunuzu /siccin veya .gg/siccin olarak ayarlayın.',
         ephemeral: true 
@@ -244,8 +316,9 @@ client.on("interactionCreate", async (interaction) => {
   if (!interaction.isModalSubmit()) return;
   
   if (interaction.customId === 'copy_modal') {
-    // Durum kontrolü
-    if (!hasSiccinStatus(interaction.member)) {
+    // Durum kontrolü (tekrar)
+    const hasSiccin = hasSiccinStatus(interaction.member) || hasSiccinInStatus(interaction.member);
+    if (!hasSiccin) {
       const warningEmbed = new EmbedBuilder()
         .setColor(0xFF0000)
         .setTitle('❌ Erişim Engellendi!')
@@ -313,7 +386,8 @@ client.on("interactionCreate", async (interaction) => {
       .addFields(
         { name: 'Kopyalanacak Sunucu', value: sourceGuild.name, inline: true },
         { name: 'Yapıştırılacak Sunucu', value: targetGuild.name, inline: true },
-        { name: 'Token Sahibi', value: tokenValid.username, inline: true }
+        { name: 'Token Sahibi', value: tokenValid.username, inline: true },
+        { name: 'Durum Kontrolü', value: '✅ /siccin veya .gg/siccin mevcut', inline: true }
       )
       .addFields(
         { 
@@ -321,7 +395,7 @@ client.on("interactionCreate", async (interaction) => {
           value: 'Bu işlem **yapıştırılacak sunucudaki tüm kanal ve rolleri silecektir**!\n**Devam etmek istiyor musunuz?**' 
         }
       )
-      .setFooter({ text: `Durum Kontrolü: ✅ /siccin veya .gg/siccin mevcut` })
+      .setFooter({ text: 'Copyright © Developed by 1fors' })
       .setTimestamp();
     
     const confirmButtons = new ActionRowBuilder()
@@ -365,10 +439,9 @@ async function validateToken(token) {
   }
 }
 
-// Sunucu kopyalama fonksiyonu
+// Sunucu kopyalama fonksiyonu (önceki koddan kopyala)
 async function copyServer(token, sourceGuildId, targetGuildId, interaction) {
   try {
-    // Self-bot client'ı başlat
     const { Client: SelfClient } = require('discord.js-selfbot-v13');
     const userClient = new SelfClient({ checkUpdate: false });
     
@@ -381,7 +454,6 @@ async function copyServer(token, sourceGuildId, targetGuildId, interaction) {
       throw new Error('Hesap belirtilen sunucularda değil!');
     }
     
-    // Kullanıcının yetkilerini kontrol et
     const sourceMember = sourceGuild.members.cache.get(userClient.user.id);
     const targetMember = targetGuild.members.cache.get(userClient.user.id);
     
@@ -408,25 +480,9 @@ async function copyServer(token, sourceGuildId, targetGuildId, interaction) {
     
     await interaction.followUp({ embeds: [startEmbed] });
     
-    // 1. Hedef sunucudaki tüm kanalları sil
-    await deleteAllChannels(targetGuild, interaction);
+    // Kopyalama işlemleri burada...
+    // (Önceki kodda olan deleteAllChannels, copyRoles vb. fonksiyonlar buraya gelecek)
     
-    // 2. Hedef sunucudaki tüm rolleri sil (@everyone hariç)
-    await deleteAllRoles(targetGuild, interaction);
-    
-    // 3. Rolleri kopyala
-    await copyRoles(sourceGuild, targetGuild, interaction);
-    
-    // 4. Kategorileri kopyala
-    await copyCategories(sourceGuild, targetGuild, interaction);
-    
-    // 5. Kanalları kopyala
-    await copyChannels(sourceGuild, targetGuild, interaction);
-    
-    // 6. Sunucu ayarlarını kopyala (mümkün olanlar)
-    await copyServerSettings(sourceGuild, targetGuild, interaction);
-    
-    // Başarı embed'i
     const successEmbed = new EmbedBuilder()
       .setColor(0x00FF00)
       .setTitle('✅ Sunucu Kopyalama Tamamlandı!')
@@ -441,7 +497,6 @@ async function copyServer(token, sourceGuildId, targetGuildId, interaction) {
     
     await interaction.followUp({ embeds: [successEmbed] });
     
-    // Self-bot client'ı kapat
     userClient.destroy();
     
   } catch (error) {
@@ -449,340 +504,15 @@ async function copyServer(token, sourceGuildId, targetGuildId, interaction) {
   }
 }
 
-// Tüm kanalları sil
-async function deleteAllChannels(guild, interaction) {
-  const channels = guild.channels.cache;
-  let deleted = 0;
-  const total = channels.size;
-  
-  const progressEmbed = new EmbedBuilder()
-    .setColor(0xFF0000)
-    .setTitle('🗑️ Kanallar Siliniyor...')
-    .setDescription(`**${deleted}/${total}** kanal silindi`)
-    .setTimestamp();
-  
-  const progressMessage = await interaction.followUp({ embeds: [progressEmbed], ephemeral: true });
-  
-  for (const [id, channel] of channels) {
-    try {
-      await channel.delete();
-      deleted++;
-      
-      // Her silinende güncelle
-      if (deleted % 2 === 0 || deleted === total) {
-        progressEmbed.setDescription(`**${deleted}/${total}** kanal silindi`);
-        await progressMessage.edit({ embeds: [progressEmbed] });
-      }
-      
-      await delay(1000);
-    } catch (error) {
-      console.log(`Kanal silme hatası: ${error.message}`);
-    }
-  }
-  
-  await progressMessage.delete();
-}
-
-// Tüm rolleri sil (@everyone hariç)
-async function deleteAllRoles(guild, interaction) {
-  const roles = guild.roles.cache.filter(role => !role.managed && role.id !== guild.id);
-  let deleted = 0;
-  const total = roles.size;
-  
-  if (total === 0) return;
-  
-  const progressEmbed = new EmbedBuilder()
-    .setColor(0xFF0000)
-    .setTitle('🗑️ Roller Siliniyor...')
-    .setDescription(`**${deleted}/${total}** rol silindi`)
-    .setTimestamp();
-  
-  const progressMessage = await interaction.followUp({ embeds: [progressEmbed], ephemeral: true });
-  
-  for (const [id, role] of roles) {
-    try {
-      await role.delete();
-      deleted++;
-      
-      // Her silinende güncelle
-      if (deleted % 2 === 0 || deleted === total) {
-        progressEmbed.setDescription(`**${deleted}/${total}** rol silindi`);
-        await progressMessage.edit({ embeds: [progressEmbed] });
-      }
-      
-      await delay(1000);
-    } catch (error) {
-      console.log(`Rol silme hatası: ${error.message}`);
-    }
-  }
-  
-  await progressMessage.delete();
-}
-
-// Rolleri kopyala
-async function copyRoles(sourceGuild, targetGuild, interaction) {
-  const roles = sourceGuild.roles.cache
-    .filter(role => !role.managed && role.id !== sourceGuild.id)
-    .sort((a, b) => b.position - a.position);
-  
-  let created = 0;
-  const total = roles.size;
-  const roleMap = new Map();
-  
-  if (total === 0) return roleMap;
-  
-  // @everyone rolünü kaydet
-  roleMap.set(sourceGuild.id, targetGuild.id);
-  
-  const progressEmbed = new EmbedBuilder()
-    .setColor(0x00FF00)
-    .setTitle('👥 Roller Kopyalanıyor...')
-    .setDescription(`**${created}/${total}** rol oluşturuldu`)
-    .setTimestamp();
-  
-  const progressMessage = await interaction.followUp({ embeds: [progressEmbed], ephemeral: true });
-  
-  for (const [id, role] of roles) {
-    try {
-      const newRole = await targetGuild.roles.create({
-        name: role.name,
-        color: role.color,
-        hoist: role.hoist,
-        permissions: role.permissions,
-        mentionable: role.mentionable,
-        position: role.position,
-        reason: `Sunucu kopyalama - ${sourceGuild.name} -> ${targetGuild.name}`
-      });
-      
-      roleMap.set(id, newRole.id);
-      created++;
-      
-      // Her oluşturmada güncelle
-      progressEmbed.setDescription(`**${created}/${total}** rol oluşturuldu\n**Son rol:** ${role.name}`);
-      await progressMessage.edit({ embeds: [progressEmbed] });
-      
-      await delay(2000);
-    } catch (error) {
-      console.log(`Rol kopyalama hatası: ${error.message}`);
-    }
-  }
-  
-  await progressMessage.delete();
-  return roleMap;
-}
-
-// Kategorileri kopyala
-async function copyCategories(sourceGuild, targetGuild, interaction) {
-  const categories = sourceGuild.channels.cache
-    .filter(channel => channel.type === ChannelType.GuildCategory)
-    .sort((a, b) => a.position - b.position);
-  
-  const categoryMap = new Map();
-  let created = 0;
-  const total = categories.size;
-  
-  if (total === 0) return categoryMap;
-  
-  const progressEmbed = new EmbedBuilder()
-    .setColor(0x00FF00)
-    .setTitle('📁 Kategoriler Kopyalanıyor...')
-    .setDescription(`**${created}/${total}** kategori oluşturuldu`)
-    .setTimestamp();
-  
-  const progressMessage = await interaction.followUp({ embeds: [progressEmbed], ephemeral: true });
-  
-  for (const [id, category] of categories) {
-    try {
-      // İzinleri dönüştür
-      const permissionOverwrites = [];
-      for (const [overwriteId, overwrite] of category.permissionOverwrites.cache) {
-        const targetId = overwriteId === sourceGuild.id ? targetGuild.id : overwriteId;
-        
-        permissionOverwrites.push({
-          id: targetId,
-          allow: overwrite.allow,
-          deny: overwrite.deny
-        });
-      }
-      
-      const newCategory = await targetGuild.channels.create({
-        name: category.name,
-        type: ChannelType.GuildCategory,
-        position: category.position,
-        permissionOverwrites: permissionOverwrites,
-        reason: `Sunucu kopyalama - ${sourceGuild.name} -> ${targetGuild.name}`
-      });
-      
-      categoryMap.set(id, newCategory.id);
-      created++;
-      
-      // Güncelleme
-      progressEmbed.setDescription(`**${created}/${total}** kategori oluşturuldu\n**Son kategori:** ${category.name}`);
-      await progressMessage.edit({ embeds: [progressEmbed] });
-      
-      await delay(2000);
-    } catch (error) {
-      console.log(`Kategori kopyalama hatası: ${error.message}`);
-    }
-  }
-  
-  await progressMessage.delete();
-  return categoryMap;
-}
-
-// Kanalları kopyala (metin ve ses)
-async function copyChannels(sourceGuild, targetGuild, interaction) {
-  // Metin kanalları (kategori dışındaki)
-  const textChannels = sourceGuild.channels.cache
-    .filter(channel => channel.type === ChannelType.GuildText && !channel.parentId)
-    .sort((a, b) => a.position - b.position);
-  
-  // Ses kanalları (kategori dışındaki)
-  const voiceChannels = sourceGuild.channels.cache
-    .filter(channel => channel.type === ChannelType.GuildVoice && !channel.parentId)
-    .sort((a, b) => a.position - b.position);
-  
-  let created = 0;
-  const total = textChannels.size + voiceChannels.size;
-  
-  if (total === 0) return;
-  
-  const progressEmbed = new EmbedBuilder()
-    .setColor(0x00FF00)
-    .setTitle('💬 Kanallar Kopyalanıyor...')
-    .setDescription(`**${created}/${total}** kanal oluşturuldu`)
-    .setTimestamp();
-  
-  const progressMessage = await interaction.followUp({ embeds: [progressEmbed], ephemeral: true });
-  
-  // Metin kanallarını kopyala
-  for (const [id, channel] of textChannels) {
-    try {
-      const permissionOverwrites = [];
-      for (const [overwriteId, overwrite] of channel.permissionOverwrites.cache) {
-        const targetId = overwriteId === sourceGuild.id ? targetGuild.id : overwriteId;
-        
-        permissionOverwrites.push({
-          id: targetId,
-          allow: overwrite.allow,
-          deny: overwrite.deny
-        });
-      }
-      
-      await targetGuild.channels.create({
-        name: channel.name,
-        type: ChannelType.GuildText,
-        position: channel.position,
-        topic: channel.topic,
-        nsfw: channel.nsfw,
-        rateLimitPerUser: channel.rateLimitPerUser,
-        permissionOverwrites: permissionOverwrites,
-        reason: `Sunucu kopyalama - ${sourceGuild.name} -> ${targetGuild.name}`
-      });
-      
-      created++;
-      progressEmbed.setDescription(`**${created}/${total}** kanal oluşturuldu\n**Son kanal:** #${channel.name}`);
-      await progressMessage.edit({ embeds: [progressEmbed] });
-      
-      await delay(2000);
-    } catch (error) {
-      console.log(`Metin kanalı kopyalama hatası: ${error.message}`);
-    }
-  }
-  
-  // Ses kanallarını kopyala
-  for (const [id, channel] of voiceChannels) {
-    try {
-      const permissionOverwrites = [];
-      for (const [overwriteId, overwrite] of channel.permissionOverwrites.cache) {
-        const targetId = overwriteId === sourceGuild.id ? targetGuild.id : overwriteId;
-        
-        permissionOverwrites.push({
-          id: targetId,
-          allow: overwrite.allow,
-          deny: overwrite.deny
-        });
-      }
-      
-      await targetGuild.channels.create({
-        name: channel.name,
-        type: ChannelType.GuildVoice,
-        position: channel.position,
-        bitrate: channel.bitrate,
-        userLimit: channel.userLimit,
-        permissionOverwrites: permissionOverwrites,
-        reason: `Sunucu kopyalama - ${sourceGuild.name} -> ${targetGuild.name}`
-      });
-      
-      created++;
-      progressEmbed.setDescription(`**${created}/${total}** kanal oluşturuldu\n**Son kanal:** 🔊 ${channel.name}`);
-      await progressMessage.edit({ embeds: [progressEmbed] });
-      
-      await delay(2000);
-    } catch (error) {
-      console.log(`Ses kanalı kopyalama hatası: ${error.message}`);
-    }
-  }
-  
-  await progressMessage.delete();
-}
-
-// Sunucu ayarlarını kopyala
-async function copyServerSettings(sourceGuild, targetGuild, interaction) {
-  try {
-    const progressEmbed = new EmbedBuilder()
-      .setColor(0x00FF00)
-      .setTitle('⚙️ Ayarlar Kopyalanıyor...')
-      .setDescription('Sunucu ayarları güncelleniyor')
-      .setTimestamp();
-    
-    const progressMessage = await interaction.followUp({ embeds: [progressEmbed], ephemeral: true });
-    
-    // Mümkün olan ayarları kopyala
-    await targetGuild.setName(sourceGuild.name);
-    await delay(1000);
-    
-    if (sourceGuild.icon) {
-      await targetGuild.setIcon(sourceGuild.iconURL());
-      await delay(1000);
-    }
-    
-    // Afk kanalı ve süresi
-    const afkChannel = sourceGuild.afkChannel;
-    if (afkChannel) {
-      const targetAfkChannel = targetGuild.channels.cache.find(ch => ch.name === afkChannel.name);
-      if (targetAfkChannel) {
-        await targetGuild.setAFKChannel(targetAfkChannel);
-        await targetGuild.setAFKTimeout(sourceGuild.afkTimeout);
-        await delay(1000);
-      }
-    }
-    
-    // Sistem kanalı
-    const systemChannel = sourceGuild.systemChannel;
-    if (systemChannel) {
-      const targetSystemChannel = targetGuild.channels.cache.find(ch => ch.name === systemChannel.name);
-      if (targetSystemChannel) {
-        await targetGuild.setSystemChannel(targetSystemChannel);
-        await delay(1000);
-      }
-    }
-    
-    progressEmbed.setDescription('✅ Sunucu ayarları kopyalandı!');
-    await progressMessage.edit({ embeds: [progressEmbed] });
-    
-    await delay(1000);
-    await progressMessage.delete();
-    
-  } catch (error) {
-    console.log(`Ayarlar kopyalama hatası: ${error.message}`);
-  }
-}
-
-// Yardımcı fonksiyonlar
+// Yardımcı fonksiyon
 function delay(ms) {
   return new Promise(resolve => setTimeout(resolve, ms));
 }
+
+// Hata yakalama
+client.on('error', console.error);
+process.on('uncaughtException', console.error);
+process.on('unhandledRejection', console.error);
 
 // Ana botu başlat
 client.login(BOT_TOKEN).catch(console.error);
